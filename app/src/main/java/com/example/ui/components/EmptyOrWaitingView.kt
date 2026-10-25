@@ -297,7 +297,7 @@ fun EmptyOrWaitingView(
           )
           Spacer(modifier = Modifier.width(10.dp))
           Text(
-            text = "Lưu ý: Bạn có thể đưa file web vào thư mục assets/web/ bất kỳ lúc nào. App sẽ tự động sao chép các file vào bộ nhớ máy và chạy run.py rồi hiển thị qua WebView.",
+            text = "Lưu ý: Bạn có thể đưa file web vào thư mục assets/web/. App sẽ trích xuất và thực thi lệnh `run.py [port]` (truyền port qua sys.argv[1] và biến PORT), sau đó tự động mở Web App trong WebView.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 18.sp

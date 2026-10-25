@@ -36,18 +36,23 @@ class PythonProcessRunner(private val context: Context) {
     pythonBin: File,
     scriptDir: File,
     scriptName: String = "run.py",
+    port: Int,
     onOutput: (String, Boolean) -> Unit
   ): Result<Process> {
     return try {
       stopProcess()
 
       val scriptFile = File(scriptDir, scriptName)
-      val pb = ProcessBuilder(pythonBin.absolutePath, scriptFile.name)
+      // Pass [port] as argument: python run.py [port]
+      val pb = ProcessBuilder(pythonBin.absolutePath, scriptFile.name, port.toString())
         .directory(scriptDir)
 
-      // Set environment variables
+      // Set environment variables including site-packages
       val env = pb.environment()
-      env["PYTHONPATH"] = scriptDir.absolutePath
+      env["PORT"] = port.toString()
+      val sitePackages = File(context.filesDir, "site-packages").absolutePath
+      val webSitePackages = File(scriptDir, "site-packages").absolutePath
+      env["PYTHONPATH"] = "${scriptDir.absolutePath}:$sitePackages:$webSitePackages:/usr/lib/python3/dist-packages:/usr/local/lib/python3.11/dist-packages"
       env["PYTHONUNBUFFERED"] = "1"
       env["HOME"] = context.filesDir.absolutePath
       env["TMPDIR"] = context.cacheDir.absolutePath

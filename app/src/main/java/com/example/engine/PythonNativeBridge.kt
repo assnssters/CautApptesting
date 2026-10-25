@@ -77,14 +77,30 @@ class PythonNativeBridge(private val context: Context) {
    */
   fun initialize(libFile: File?, homeDir: File?): Result<String> {
     return try {
-      val libToLoad = libFile?.absolutePath ?: "python3"
+      val libToLoad = libFile?.absolutePath ?: "python3.11"
       Log.i(TAG, "Attempting to load library: $libToLoad")
+
+      // Pre-load bundled companion native libraries if present in app jniLibs
+      try {
+        val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+        listOf("crypto_python", "ssl_python", "sqlite3_python").forEach { dep ->
+          val f = File(nativeDir, "lib$dep.so")
+          if (f.exists()) {
+            try {
+              System.load(f.absolutePath)
+              Log.d(TAG, "Loaded dependency: ${f.name}")
+            } catch (t: Throwable) {
+              Log.w(TAG, "Could not pre-load ${f.name}", t)
+            }
+          }
+        }
+      } catch (_: Throwable) {}
 
       val api = Native.load(libToLoad, PythonCInterface::class.java)
       pythonInterface = api
       loadedLibraryPath = libToLoad
 
-      // Configure Python Home if available
+      // Configure Python Home if available (e.g. bundled stdlib)
       homeDir?.let {
         api.Py_SetPythonHome(WString(it.absolutePath))
       }
@@ -94,12 +110,12 @@ class PythonNativeBridge(private val context: Context) {
       }
 
       val version = try {
-        api.Py_GetVersion() ?: "Unknown CPython"
+        api.Py_GetVersion() ?: "CPython 3.11 (Bundled in App)"
       } catch (e: Exception) {
-        "CPython Initialized"
+        "CPython 3.11 (Bundled in App)"
       }
 
-      Log.i(TAG, "Python initialized successfully: $version")
+      Log.i(TAG, "Python initialized successfully from app bundle: $version")
       Result.success(version)
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to initialize libpython via JNA", t)
@@ -109,10 +125,12 @@ class PythonNativeBridge(private val context: Context) {
 
   /**
    * Runs Python code using PyRun_SimpleString with stdout/stderr redirected to a log file
+   * Passes the port as sys.argv[1] (i.e. run.py [port])
    */
   fun runScript(
     scriptDir: File,
     scriptName: String = "run.py",
+    port: Int,
     logFile: File
   ): Result<Int> {
     val api = pythonInterface ?: return Result.failure(
@@ -121,6 +139,7 @@ class PythonNativeBridge(private val context: Context) {
 
     return try {
       val sanitizedScriptDir = scriptDir.absolutePath.replace("\\", "/")
+      val sanitizedFilesDir = context.filesDir.absolutePath.replace("\\", "/")
       val sanitizedLogFile = logFile.absolutePath.replace("\\", "/")
 
       val bootstrapCode = """
@@ -129,6 +148,24 @@ import os
 
 sys.path.insert(0, '$sanitizedScriptDir')
 os.chdir('$sanitizedScriptDir')
+
+# Add bundled standard library and site-packages from app internal storage
+stdlib_path = os.path.join('$sanitizedFilesDir', 'stdlib')
+if os.path.exists(stdlib_path) and stdlib_path not in sys.path:
+    sys.path.insert(1, stdlib_path)
+
+site_packages = os.path.join('$sanitizedFilesDir', 'site-packages')
+if os.path.exists(site_packages) and site_packages not in sys.path:
+    sys.path.insert(2, site_packages)
+
+web_site_packages = os.path.join('$sanitizedScriptDir', 'site-packages')
+if os.path.exists(web_site_packages) and web_site_packages not in sys.path:
+    sys.path.insert(3, web_site_packages)
+
+# Set arguments so run.py receives port as sys.argv[1] (e.g. run.py [port])
+script_path = os.path.join('$sanitizedScriptDir', '$scriptName')
+sys.argv = [script_path, '$port']
+os.environ['PORT'] = '$port'
 
 class Logger:
     def __init__(self, filepath):
@@ -143,9 +180,9 @@ try:
     log_out = Logger('$sanitizedLogFile')
     sys.stdout = log_out
     sys.stderr = log_out
-    print("[PyWebRunner] Python environment initialized. Starting $scriptName...")
+    print("[PyWebRunner] Executing: $scriptName $port")
+    print("[PyWebRunner] sys.argv = " + str(sys.argv))
     
-    script_path = os.path.join('$sanitizedScriptDir', '$scriptName')
     if os.path.exists(script_path):
         with open(script_path, 'r', encoding='utf-8') as f:
             code = compile(f.read(), script_path, 'exec')

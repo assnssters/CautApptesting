@@ -11,6 +11,70 @@ import java.util.zip.ZipInputStream
 object AssetExtractor {
   private const val TAG = "AssetExtractor"
   const val ASSETS_WEB_DIR = "web"
+  const val BUNDLED_PACKAGES_ZIP = "python_packages.zip"
+  const val BUNDLED_STDLIB_ZIP = "stdlib.zip"
+
+  /**
+   * Checks if stdlib.zip exists in APK assets
+   */
+  fun hasStdlib(context: Context): Boolean {
+    return try {
+      context.assets.open(BUNDLED_STDLIB_ZIP).use { true }
+    } catch (e: Exception) {
+      false
+    }
+  }
+
+  /**
+   * Extracts Python standard library to internal storage
+   */
+  fun extractStdlib(
+    context: Context,
+    targetDir: File,
+    onProgress: (String) -> Unit = {}
+  ): Boolean {
+    if (!hasStdlib(context)) return false
+    return try {
+      context.assets.open(BUNDLED_STDLIB_ZIP).use { input ->
+        extractZip(input, targetDir, onProgress)
+      }
+      true
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed extracting Python stdlib", e)
+      false
+    }
+  }
+
+  /**
+   * Checks if python_packages.zip exists in APK assets
+   */
+  fun hasBundledPackages(context: Context): Boolean {
+    return try {
+      context.assets.open(BUNDLED_PACKAGES_ZIP).use { true }
+    } catch (e: Exception) {
+      false
+    }
+  }
+
+  /**
+   * Extracts bundled python libraries (flask, boto3, requests, etc.) to site-packages
+   */
+  fun extractBundledPackages(
+    context: Context,
+    targetDir: File,
+    onProgress: (String) -> Unit = {}
+  ): Boolean {
+    if (!hasBundledPackages(context)) return false
+    return try {
+      context.assets.open(BUNDLED_PACKAGES_ZIP).use { input ->
+        extractZip(input, targetDir, onProgress)
+      }
+      true
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed extracting bundled python packages", e)
+      false
+    }
+  }
 
   /**
    * Checks if assets/web exists and contains any files

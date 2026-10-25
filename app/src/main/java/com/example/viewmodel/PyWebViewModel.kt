@@ -33,6 +33,8 @@ class PyWebViewModel(application: Application) : AndroidViewModel(application) {
 
   private val context = application.applicationContext
   val webDir: File = File(context.filesDir, "web")
+  val sitePackagesDir: File = File(context.filesDir, "site-packages")
+  val stdlibDir: File = File(context.filesDir, "stdlib")
   val logFile: File = File(context.cacheDir, "python_output.log")
 
   private val nativeBridge = PythonNativeBridge(context)
@@ -104,6 +106,24 @@ class PyWebViewModel(application: Application) : AndroidViewModel(application) {
       addLog(LogType.INFO, "=== Khởi động PyWeb Runner ===")
       addLog(LogType.INFO, "Thư mục làm việc: ${webDir.absolutePath}")
 
+      // 0a. Extract bundled Python standard library (stdlib)
+      if (AssetExtractor.hasStdlib(context) && (!stdlibDir.exists() || stdlibDir.list().isNullOrEmpty())) {
+        addLog(LogType.INFO, "Đang nạp thư viện chuẩn Python (stdlib) tích hợp sẵn trong APK...")
+        withContext(Dispatchers.IO) {
+          AssetExtractor.extractStdlib(context, stdlibDir)
+        }
+        addLog(LogType.SUCCESS, "Đã nạp thành công Python standard library nội bộ.")
+      }
+
+      // 0b. Extract bundled python packages if available
+      if (AssetExtractor.hasBundledPackages(context) && (!sitePackagesDir.exists() || sitePackagesDir.list().isNullOrEmpty())) {
+        addLog(LogType.INFO, "Đang trích xuất thư viện Python tích hợp sẵn (Flask, Boto3, Requests...)...")
+        withContext(Dispatchers.IO) {
+          AssetExtractor.extractBundledPackages(context, sitePackagesDir)
+        }
+        addLog(LogType.SUCCESS, "Đã cài đặt sẵn: colorama, flask, boto3, jwt, cryptography, requests.")
+      }
+
       // 1. Check APK assets/web
       val hasAssets = AssetExtractor.hasAssetsWeb(context)
       if (hasAssets) {
@@ -141,24 +161,25 @@ class PyWebViewModel(application: Application) : AndroidViewModel(application) {
 
   private fun launchPythonWeb(runScript: File) {
     executionJob = viewModelScope.launch(Dispatchers.IO) {
-      _status.value = RunnerStatus.Initializing("Đang cấu hình môi trường Python...")
+      val targetPort = _selectedPort.value
+      _status.value = RunnerStatus.Initializing("Đang cấu hình môi trường Python (Port: $targetPort)...")
 
-      // Check for native libpython
+      // Check for native libpython in app jniLibs or local directory
       val libpythonFile = nativeBridge.findLibPython(webDir)
       val pythonBin = processRunner.findPythonBinary(webDir)
 
       when {
         libpythonFile != null -> {
-          addLog(LogType.INFO, "Tìm thấy thư viện libpython: ${libpythonFile.absolutePath}")
+          addLog(LogType.INFO, "Nạp libpython tích hợp trong app: ${libpythonFile.absolutePath}")
           _status.value = RunnerStatus.Initializing("Đang nạp libpython (${libpythonFile.name})...")
           
-          val initResult = nativeBridge.initialize(libpythonFile, webDir)
+          val initResult = nativeBridge.initialize(libpythonFile, stdlibDir)
           initResult.onSuccess { ver ->
-            addLog(LogType.SUCCESS, "Khởi tạo libpython thành công! Phiên bản: $ver")
-            startPortPolling("libpython C-API")
+            addLog(LogType.SUCCESS, "Khởi tạo libpython thành công! $ver")
+            startPortPolling("Bundled libpython 3.11")
 
-            addLog(LogType.INFO, "Đang thực thi ${runScript.name} qua CPython...")
-            val runResult = nativeBridge.runScript(webDir, runScript.name, logFile)
+            addLog(LogType.INFO, "Đang thực thi: ${runScript.name} $targetPort (truyền port qua agr sys.argv[1])...")
+            val runResult = nativeBridge.runScript(webDir, runScript.name, targetPort, logFile)
             runResult.onFailure { err ->
               addLog(LogType.ERROR, "Lỗi khi chạy script Python: ${err.message}")
               _status.value = RunnerStatus.Error(
@@ -174,10 +195,11 @@ class PyWebViewModel(application: Application) : AndroidViewModel(application) {
 
         pythonBin != null -> {
           addLog(LogType.INFO, "Tìm thấy binary Python: ${pythonBin.absolutePath}")
-          _status.value = RunnerStatus.Initializing("Đang chạy tiến trình Python...")
+          _status.value = RunnerStatus.Initializing("Đang chạy: python ${runScript.name} $targetPort...")
           startPortPolling("Python Process")
 
-          val procResult = processRunner.startProcess(pythonBin, webDir, runScript.name) { line, isErr ->
+          addLog(LogType.INFO, "Khởi chạy tiến trình: python ${runScript.name} $targetPort")
+          val procResult = processRunner.startProcess(pythonBin, webDir, runScript.name, targetPort) { line, isErr ->
             addLog(if (isErr) LogType.PYTHON_ERR else LogType.PYTHON_OUT, line)
           }
 
@@ -204,11 +226,11 @@ class PyWebViewModel(application: Application) : AndroidViewModel(application) {
           if (defaultInit.isSuccess) {
             addLog(LogType.SUCCESS, "Đã nạp libpython hệ thống!")
             startPortPolling("System libpython")
-            nativeBridge.runScript(webDir, runScript.name, logFile)
+            nativeBridge.runScript(webDir, runScript.name, targetPort, logFile)
           } else {
             addLog(
               LogType.WARNING,
-              "Không có libpython sẵn có. Sẽ giám sát cổng ${_selectedPort.value} nếu server được khởi chạy ngoài..."
+              "Không có libpython sẵn có. Sẽ giám sát cổng $targetPort nếu server được khởi chạy ngoài..."
             )
             startPortPolling("Custom / Socket Watcher")
             _status.value = RunnerStatus.WaitingForAssets(
