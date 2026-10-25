@@ -1,0 +1,6 @@
+{
+  "name": "PyWeb Runner",
+  "description": "Android Python web application runner with embedded libpython runtime and WebView display",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
